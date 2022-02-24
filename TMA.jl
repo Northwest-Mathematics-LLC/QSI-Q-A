@@ -10,15 +10,7 @@
 
 using SparseArrays
 using LinearAlgebra
-
-# using my own implementation of union-find structure, can make faster at some point
-# Julia package DataStructures.jl implementation is broken...
-mutable struct UnionFind
-    parents::Vector{Int}
-    ranks::Vector{Int} 
-    ngroups::Int
-    UnionFind(n) = new(collect(1:n),ones(Int,n),n)
-end
+using DataStructures
 
 function TMA(A::SparseMatrixCSC, f::Vector{Float64}, τ::Float64 = Inf)
 
@@ -33,8 +25,9 @@ function TMA(A::SparseMatrixCSC, f::Vector{Float64}, τ::Float64 = Inf)
 
     # initialize clustering
     n = length(f)
-    U = UnionFind(n)
+    U = IntDisjointSets(n)
     g = zeros(Int,n)
+    nclust = 0
 
     # intialize persistance diagram and tree
     PD = spzeros(n,2)
@@ -46,6 +39,7 @@ function TMA(A::SparseMatrixCSC, f::Vector{Float64}, τ::Float64 = Inf)
         if isempty(N)
             # i is a peak in G
             PD[i,:] = [f[i],-10*f[I[end]]]
+            nclust += 1
         else
             ~ , nk = findmax(f[N])
             g[i] = N[nk] #g[i] is approx gradient, neighbor with max f
@@ -54,56 +48,54 @@ function TMA(A::SparseMatrixCSC, f::Vector{Float64}, τ::Float64 = Inf)
                 error("J[rᵢ] >= J[i]")
             end
             # merge i into rᵢ component
-            U.parents[i] = rᵢ
-            U.ranks[rᵢ] += 1
-            U.ngroups -= 1
+            union!(U,rᵢ,i)
             if PD[i,1] !==0.0 # if a prior root with a birth time, record death time
                 PD[i,2] = f[i]
-                if PD[i,1]<PD[i,2]
-                    error("birth time less than death time")
-                end
+                #if PD[i,1]<PD[i,2]
+                #    error("birth time less than death time")
+                #end
             end
 
             # now we compare approx gradients at all other neighbors to find
             # local max and merge to that root
             for j in N
                 rⱼ = U.parents[j]
-                if rⱼ !== rᵢ && minimum([f[rⱼ], f[rᵢ]]) < τ
+                if rⱼ !== rᵢ #&& minimum([f[rⱼ], f[rᵢ]]) < τ
                     if f[rᵢ] < f[rⱼ]
-                        #nroots = findall(U.parents .== rᵢ)
-                        U.parents[U.parents .== rᵢ] .= rⱼ
-                        #U.ranks[rⱼ] += length(nroots)
-                        U.ngroups -= 1 
+                        union!(U,rⱼ,rᵢ)
+                        nclust -= 1
                         if PD[rᵢ,1] !==0.0
                             PD[rᵢ,2] = f[rᵢ]
-                            if PD[rᵢ,1]<PD[rᵢ,2]
-                                error("birth time less than death time")
-                            end
+                            #if PD[rᵢ,1]<PD[rᵢ,2]
+                            #    error("birth time less than death time")
+                            #end
                         end
                     else
-                        #nroots = findall(U.parents .== rⱼ)
-                        U.parents[U.parents .== rⱼ] .= rᵢ
-                        #U.ranks[rᵢ] += length(nroots)
-                        U.ngroups -= 1 
+                        union!(U,rᵢ,rⱼ)
+                        nclust -= 1
                         if PD[rⱼ,1] !==0.0
                             PD[rⱼ,2] = f[rⱼ]
-                            if PD[rⱼ,1]<PD[rⱼ,2]
-                                error("birth time less than death time")
-                            end
+                            #if PD[rⱼ,1]<PD[rⱼ,2]
+                            #    error("birth time less than death time")
+                            #end
                         end
                     end
-                    rᵢ = U.parents[rⱼ] #rᵢ set to new highest root
+                    rᵢ = find_root!(U,rⱼ) #rᵢ set to new highest root
                 end
             end
         end
         # record number of clusters at current level
-        roots = unique(U.parents)
-        num_clust = length(findall(f[roots] .>= f[i]))
-        tree[J[i],:] .= [f[i], num_clust]
+        tree[J[i],:] .= [f[i], nclust]
     end
     # output is sets in U with root such that f[r] ≧ τ
     S = Vector{Int64}[]
     Noise = Int64[]
+    # update roots of all points
+    # (can this be done faster, or within UnionFind?) 
+    # (This should be automatic I think, full linear cost even one time like below is not great...)
+    for i = 1 : n
+        find_root!(U,i)
+    end
     roots = unique(U.parents)
     for r in roots
         if τ < Inf

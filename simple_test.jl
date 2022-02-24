@@ -88,7 +88,7 @@ D = pairwise(Euclidean(), npoints, dims = 2) # pairwise Euclidean distances of c
 
 # use knn to choose scale (NearestNeighbors.jl)
 kdtree = KDTree(npoints)
-k = 50
+k = 20
 idxs, dists = knn(kdtree, npoints, k, true)
 
 # set δ to average of distance of kth nearest neighbor
